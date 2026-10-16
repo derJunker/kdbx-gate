@@ -15,7 +15,9 @@ deployable over FTP. It needs no database, no SSH, no cron and no Composer.
 - The file stays a normal `.kdbx`, so KeePassXC, KeePassDX and other KeePass apps
   keep working with it.
 
-See [`docs/SPEC.md`](docs/SPEC.md) for the design and the HTTP API.
+- **[`docs/GUIDE.md`](docs/GUIDE.md):** how it works in plain terms, what `config.php`
+  is, setup, and what to do when something changes.
+- **[`docs/SPEC.md`](docs/SPEC.md):** the design and the HTTP API.
 
 ## How the password check works
 
