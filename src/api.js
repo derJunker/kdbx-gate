@@ -3,6 +3,14 @@
 import { checkParams, TOKEN_RE } from './kdf.js';
 
 const REV_RE = /^[0-9a-f]{64}$/;
+const UNIX_TS_RE = /^[1-9][0-9]{0,11}$/;
+
+/** Previous successful open from the X-Vault-Last-Login(-UA) headers: {at: Date, ua} or null. */
+function lastLoginFrom(headers) {
+  const at = (headers.get('X-Vault-Last-Login') || '').trim();
+  if (!UNIX_TS_RE.test(at)) return null;
+  return { at: new Date(Number(at) * 1000), ua: (headers.get('X-Vault-Last-Login-UA') || '').slice(0, 256) };
+}
 
 export class ApiError extends Error {
   /**
@@ -150,7 +158,7 @@ export function createApi({ baseUrl = 'api.php', fetch: fetchImpl, location } = 
       return { retryAfter: toInt(body.retryAfter), attemptsLeft: toInt(body.attemptsLeft) };
     },
 
-    /** POST ?a=open -> {data: ArrayBuffer, rev} */
+    /** POST ?a=open -> {data: ArrayBuffer, rev, lastLogin: {at: Date, ua} | null} */
     async open(token) {
       guardToken(token);
       const res = await request('open', {
@@ -164,7 +172,7 @@ export function createApi({ baseUrl = 'api.php', fetch: fetchImpl, location } = 
         });
       }
       const data = await res.arrayBuffer();
-      return { data, rev };
+      return { data, rev, lastLogin: lastLoginFrom(res.headers) };
     },
 
     /** POST ?a=save with the encrypted file -> {rev} */

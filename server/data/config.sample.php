@@ -24,7 +24,7 @@ return [
     // The KeePass file. May point outside the web root.
     'vault_file'      => __DIR__ . '/vault.kdbx',
 
-    // Directory for lockout.json, vault.lock and backups/. Must be writable by PHP.
+    // Directory for lockout.json, lastlogin.json, vault.lock and backups/. Must be writable by PHP.
     'state_dir'       => __DIR__,
 
     // Failed attempts allowed before the delay starts.

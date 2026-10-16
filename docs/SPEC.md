@@ -55,6 +55,7 @@ data/config.sample.php
 data/config.php   (created by the user from setup.html)
 data/vault.kdbx   (uploaded by the user)
 data/lockout.json (created at runtime)
+data/lastlogin.json (created at runtime; time and User-Agent of the latest successful open)
 data/backups/     (created at runtime; old versions from before each save)
 ```
 
@@ -101,7 +102,17 @@ state.
 ### `POST api.php?a=open`
 Header `X-Vault-Token: <64 hex>`. The request body is ignored.
 - 200: the raw `.kdbx` bytes, `Content-Type: application/octet-stream`, header
-  `X-Vault-Rev: <sha256 hex of the file bytes>`.
+  `X-Vault-Rev: <sha256 hex of the file bytes>`. If an earlier successful open is on
+  record, also `X-Vault-Last-Login: <unix ts>` and (if that request sent one)
+  `X-Vault-Last-Login-UA: <its User-Agent>`.
+- Last login: after the gate accepts and the vault file is opened, `open` replaces
+  `state_dir/lastlogin.json` (`{"at": unix_ts, "ua": string}`, under an exclusive
+  `flock`) with the current request and reports the previous content in the headers
+  above. Nothing else is stored (no IP, no token). The User-Agent is reduced to
+  printable ASCII (0x20-0x7E) and 256 characters. An empty or corrupt file counts
+  as "no earlier open" and is overwritten. If the file cannot be opened, locked or
+  written, the vault is not served (500 `{"error":"state_error"}`). Failed, locked,
+  `status` and `save` requests never touch it.
 - 401 `{"error":"bad_token","attemptsLeft":n,"retryAfter":s}`: wrong token (or
   missing/malformed token, which counts as a failed attempt). `retryAfter` is 0
   while `attemptsLeft > 0`, otherwise `delay_seconds`.
@@ -152,6 +163,10 @@ else:
   `kdbxweb.Kdbx.load(bytes, new Credentials(ProtectedValue.fromString(pw), keyFile?))`.
   The token and the rev stay in memory. A key file is optional and only used for KDBX
   decryption.
+- The unlocked view's top bar shows the previous successful open from
+  `X-Vault-Last-Login(-UA)`: "Last login: <local date/time> · <browser> on <system>"
+  (full User-Agent as tooltip), or "Last login: none recorded". An unexpected time or
+  device there means someone else had the password.
 - The server's 401/429 responses are shown as "Wrong password, n attempts left before
   delay" or "Locked, try again in mm:ss" with a live countdown.
 - If the gate accepts but the KDBX decryption fails, the client shows: "Server accepted

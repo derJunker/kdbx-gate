@@ -50,7 +50,7 @@ test('npm run build output: bundles exist, no eval-like code, CSP-clean HTML', a
   if (await exists(path.join(root, 'server', '.htaccess'))) assert.ok(await exists(path.join(dist, '.htaccess')));
   const walk = async (dir) => (await readdir(dir, { withFileTypes: true })).flatMap((d) => [path.join(dir, d.name)]);
   const dataFiles = (await exists(path.join(dist, 'data'))) ? (await walk(path.join(dist, 'data'))).map((p) => path.basename(p)) : [];
-  for (const forbidden of ['config.php', 'vault.kdbx', 'lockout.json', 'backups', 'vault.lock']) {
+  for (const forbidden of ['config.php', 'vault.kdbx', 'lockout.json', 'lastlogin.json', 'backups', 'vault.lock']) {
     assert.ok(!dataFiles.includes(forbidden), `dist/data/${forbidden} must not be shipped`);
   }
 });
@@ -68,6 +68,7 @@ test('serverFilter excludes secrets and runtime files', () => {
   assert.equal(ok('data/vault.kdbx'), false);
   assert.equal(ok('data/other.kdbx'), false);
   assert.equal(ok('data/lockout.json'), false);
+  assert.equal(ok('data/lastlogin.json'), false);
   assert.equal(ok('data/vault.lock'), false);
   assert.equal(ok('data/backups'), false);
   assert.equal(ok('data/backups/vault-20260101-000000.kdbx'), false);

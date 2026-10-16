@@ -9,7 +9,7 @@
  * The binding contract is docs/SPEC.md. Actions (query parameter "a"):
  *   GET  api.php?a=params   public Argon2id parameters and salt
  *   GET  api.php?a=status   lockout status (read-only)
- *   POST api.php?a=open     gate, then stream the .kdbx
+ *   POST api.php?a=open     gate, record the last login, then stream the .kdbx
  *   POST api.php?a=save     gate, then replace the .kdbx (conflict check + backup)
  *
  * Security notes:
@@ -281,7 +281,12 @@ function kg_retry_after($state, $cfg, $now)
  */
 function kg_write_state($fh, $state)
 {
-    $json = json_encode(array('fails' => $state['fails'], 'last' => $state['last']));
+    return kg_overwrite($fh, json_encode(array('fails' => $state['fails'], 'last' => $state['last'])));
+}
+
+/** Write-then-truncate $json into the locked handle (shared by all small state files). */
+function kg_overwrite($fh, $json)
+{
     if (!is_string($json) || !@rewind($fh)) {
         return false;
     }
@@ -384,6 +389,60 @@ function kg_gate($cfg)
 }
 
 /* ------------------------------------------------------------------------ */
+/* Last login                                                               */
+/* ------------------------------------------------------------------------ */
+
+/** The client's User-Agent, reduced to printable ASCII (header-safe) and 256 chars. */
+function kg_user_agent()
+{
+    $ua = isset($_SERVER['HTTP_USER_AGENT']) ? $_SERVER['HTTP_USER_AGENT'] : '';
+    if (!is_string($ua)) {
+        return '';
+    }
+    $ua = preg_replace('/[^\x20-\x7E]/', '', $ua);
+    return is_string($ua) ? substr(trim($ua), 0, 256) : '';
+}
+
+/** Returns array(at, ua) or null for an empty or corrupt lastlogin.json. */
+function kg_parse_last_login($raw)
+{
+    $d = json_decode($raw, true);
+    if (!is_array($d) || !isset($d['at'], $d['ua']) || !is_int($d['at']) || $d['at'] <= 0
+        || !is_string($d['ua']) || !preg_match('/^[\x20-\x7E]{0,256}\z/', $d['ua'])) {
+        return null;
+    }
+    return array('at' => $d['at'], 'ua' => $d['ua']);
+}
+
+/**
+ * Record this open in state_dir/lastlogin.json (time and User-Agent only) and return
+ * the previous record, or null if there was none. Fails closed: if the record cannot
+ * be written, the vault is not served (500 state_error).
+ */
+function kg_swap_last_login($cfg)
+{
+    $fh = @fopen($cfg['state_dir'] . '/lastlogin.json', 'c+');
+    if ($fh === false) {
+        kg_error(500, 'state_error');
+    }
+    if (!@flock($fh, LOCK_EX)) {
+        @fclose($fh);
+        kg_error(500, 'state_error');
+    }
+    $raw = @stream_get_contents($fh);
+    if (!is_string($raw)) {
+        kg_state_fail($fh);
+    }
+    $previous = kg_parse_last_login($raw);
+    $json = json_encode(array('at' => time(), 'ua' => kg_user_agent()), JSON_UNESCAPED_SLASHES);
+    if (!kg_overwrite($fh, $json)) {
+        kg_state_fail($fh);
+    }
+    kg_release($fh);
+    return $previous;
+}
+
+/* ------------------------------------------------------------------------ */
 /* Actions                                                                  */
 /* ------------------------------------------------------------------------ */
 
@@ -470,6 +529,7 @@ function kg_action_open($cfg)
         @fclose($fh);
         kg_error(500, 'server_error');
     }
+    $last = kg_swap_last_login($cfg);
 
     kg_discard_output();
     http_response_code(200);
@@ -477,6 +537,12 @@ function kg_action_open($cfg)
     header('Content-Type: application/octet-stream');
     header('Content-Length: ' . $size);
     header('X-Vault-Rev: ' . $rev);
+    if ($last !== null) {
+        header('X-Vault-Last-Login: ' . $last['at']);
+        if ($last['ua'] !== '') {
+            header('X-Vault-Last-Login-UA: ' . $last['ua']);
+        }
+    }
     $sent = 0;
     while ($sent < $size) {
         $chunk = @fread($fh, min(KG_CHUNK, $size - $sent));

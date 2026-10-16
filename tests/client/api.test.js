@@ -63,6 +63,21 @@ test('open: POST with X-Vault-Token header, token never in the URL', async () =>
   assert.equal(call.init.redirect, 'error');
 });
 
+test('open: previous login from X-Vault-Last-Login(-UA), null if absent or malformed', async () => {
+  const respond = (headers) => () =>
+    new Response(new Uint8Array(8), { status: 200, headers: { 'X-Vault-Rev': REV, ...headers } });
+  let api = createApi({ fetch: stub(respond({ 'X-Vault-Last-Login': '1760000000', 'X-Vault-Last-Login-UA': 'UA/1' })).fetch });
+  const { lastLogin } = await api.open(TOKEN);
+  assert.equal(lastLogin.at.getTime(), 1760000000 * 1000);
+  assert.equal(lastLogin.ua, 'UA/1');
+  api = createApi({ fetch: stub(respond({ 'X-Vault-Last-Login': '1760000000' })).fetch });
+  assert.equal((await api.open(TOKEN)).lastLogin.ua, '');
+  for (const bad of [undefined, '', '0', '-5', '1e9', 'abc', '12.5', '0123', '9'.repeat(13)]) {
+    api = createApi({ fetch: stub(respond(bad === undefined ? {} : { 'X-Vault-Last-Login': bad })).fetch });
+    assert.equal((await api.open(TOKEN)).lastLogin, null, `header ${bad}`);
+  }
+});
+
 test('open: missing X-Vault-Rev -> bad_response', async () => {
   const api = createApi({ fetch: stub(() => new Response('hello', { status: 200 })).fetch });
   await assert.rejects(api.open(TOKEN), (e) => e.code === 'bad_response');

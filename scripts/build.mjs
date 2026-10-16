@@ -27,14 +27,14 @@ export const browserShims = {
   },
 };
 
-// Never ship secrets / runtime state from server/ (data/config.php, the vault, lockout, backups).
+// Never ship secrets / runtime state from server/ (data/config.php, the vault, lockout, last login, backups).
 export function serverFilter(src, base = serverDir) {
   const rel = path.relative(base, src).split(path.sep).join('/');
   if (rel === '') return true;
   const name = path.posix.basename(rel);
   if (rel === 'data/config.php') return false;
   if (name === 'backups' || rel.includes('/backups/') || rel.startsWith('backups/')) return false;
-  if (name === 'lockout.json' || name.endsWith('.kdbx') || name.endsWith('.lock')) return false;
+  if (name === 'lockout.json' || name === 'lastlogin.json' || name.endsWith('.kdbx') || name.endsWith('.lock')) return false;
   return true;
 }
 

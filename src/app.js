@@ -4,6 +4,7 @@ import { deriveAuthToken } from './kdf.js';
 import { Vault, isInvalidKeyError, safeHttpUrl } from './vault.js';
 import { generatePassword, estimateBits } from './passgen.js';
 import { copyText } from './clipboard.js';
+import { lastLoginText } from './lastlogin.js';
 import { byId, h, show, mmss, downloadBlob, setStatus, errorMessage } from './dom.js';
 
 const AUTO_LOCK_MS = 5 * 60 * 1000;
@@ -40,7 +41,7 @@ let el = {};
 function cacheElements() {
   const ids = [
     'warnings', 'view-lock', 'lock-form', 'lock-password', 'keyfile-toggle', 'keyfile-row', 'lock-keyfile',
-    'unlock-btn', 'lock-status', 'view-app', 'vault-name', 'dirty-badge', 'btn-save', 'btn-lock', 'search',
+    'unlock-btn', 'lock-status', 'view-app', 'vault-name', 'dirty-badge', 'btn-save', 'btn-lock', 'last-login', 'search',
     'app-status', 'view-list', 'btn-add', 'list-count', 'entry-list', 'btn-download', 'view-entry',
     'group-tree', 'breadcrumb', 'btn-group-new', 'group-tools', 'btn-group-rename', 'btn-group-delete', 'group-note',
     'entry-detail', 'btn-entry-back', 'btn-entry-edit', 'btn-entry-delete', 'view-edit', 'edit-heading',
@@ -216,7 +217,7 @@ async function onUnlock(event) {
     el.lockPassword.value = '';
     el.lockKeyfile.value = '';
     lockStatus('', '');
-    enterApp();
+    enterApp(opened.lastLogin);
   } catch (err) {
     if (err.code) showGateError(err);
     else lockStatus('error', errorMessage(err));
@@ -225,9 +226,12 @@ async function onUnlock(event) {
   }
 }
 
-function enterApp() {
+function enterApp(lastLogin) {
   state.lastActivity = Date.now();
   el.vaultName.textContent = state.vault.name;
+  const last = lastLoginText(lastLogin);
+  el.lastLogin.textContent = last.text;
+  el.lastLogin.title = last.title;
   el.search.value = '';
   state.groupId = state.vault.rootGroupId();
   state.expanded = new Set([state.groupId]);
@@ -257,6 +261,8 @@ function lock(message = '') {
   el.editForm.reset();
   el.search.value = '';
   el.vaultName.textContent = '';
+  el.lastLogin.textContent = '';
+  el.lastLogin.title = '';
   setStatus(el.appStatus, '', '');
   show(el.viewApp, false);
   show(el.viewLock, true);

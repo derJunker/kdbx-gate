@@ -15,8 +15,10 @@
   --focus: #1d5fc4;
   --radius: 6px;
   --tap: 44px;
-  /* sticky top bar: 2 rows of --tap, 0.5rem padding top/bottom + 0.5rem row gap, 1px border */
-  --topbar-h: calc(2 * var(--tap) + 1.5rem + 1px);
+  /* sticky top bar: 2 rows of --tap + the last-login line (--meta-h), 0.5rem padding
+     top/bottom + 2 x 0.5rem row gap, 1px border */
+  --meta-h: 1.25rem;
+  --topbar-h: calc(2 * var(--tap) + var(--meta-h) + 2rem + 1px);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -290,6 +292,16 @@ a {
   flex: 1;
   min-width: 0;
   font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.last-login {
+  flex: 1;
+  min-width: 0;
+  height: var(--meta-h);
+  line-height: var(--meta-h);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

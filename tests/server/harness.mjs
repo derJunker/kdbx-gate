@@ -134,7 +134,7 @@ export async function startServer(opts = {}) {
   const www = join(root, 'www');
   cpSync(SERVER_DIR, www, { recursive: true });
   // A developer's real data must never end up in (or influence) a test run.
-  for (const f of ['config.php', 'vault.kdbx', 'lockout.json', 'vault.lock', 'backups']) {
+  for (const f of ['config.php', 'vault.kdbx', 'lockout.json', 'lastlogin.json', 'vault.lock', 'backups']) {
     rmSync(join(www, 'data', f), { recursive: true, force: true });
   }
   const stateRoot = join(root, 'state');
@@ -151,6 +151,7 @@ export async function startServer(opts = {}) {
   const s = {
     root, www, stateDir, configPath, vaultPath, tokenHex, salt, verifier,
     lockoutPath: join(stateDir, 'lockout.json'),
+    lastLoginPath: join(stateDir, 'lastlogin.json'),
     backupsDir: join(stateDir, 'backups'),
     vault: null,
   };

@@ -17,6 +17,10 @@ what to do when something changes. For the exact protocol and API, see [`SPEC.md
    ever holds the encrypted `.kdbx`.
 5. **Saving works the same way in reverse.** The browser encrypts the vault and uploads
    it. The server keeps the previous version in `data/backups/` (the newest 10).
+6. **You see when the vault was last opened.** Each successful unlock stores its time
+   and browser (User-Agent, nothing else) in `data/lastlogin.json`. The top bar of the
+   unlocked app shows the *previous* one, e.g. "Last login: 16 Oct 2026, 14:03 · Firefox
+   on Linux". If you don't recognise it, someone else knows your password: change it.
 
 The file stays a normal KeePass file, so KeePassXC, KeePassDX and other KeePass apps
 keep working with it.
@@ -30,7 +34,7 @@ keep working with it.
 | Server | `api.php` | The only server code: token check, lockout, sending and saving the file |
 | Server | `.htaccess`, `data/.htaccess` | Blocks direct downloads from `data/` and sends the security headers |
 | Server, `data/` | `config.php`, `vault.kdbx` | The two files you upload |
-| Server, `data/` | `lockout.json`, `backups/` | Created automatically at runtime |
+| Server, `data/` | `lockout.json`, `lastlogin.json`, `backups/` | Created automatically at runtime |
 | This repo | `src/`, `server/`, `tests/` | Source and tests. `npm run build` puts the deployable files in `dist/` |
 
 ## `config.php`
@@ -94,7 +98,7 @@ same `config.php` keeps working when the vault's contents or encryption settings
    - `https://your-site/vault/` should show no red warning.
    - `curl -sI https://your-site/vault/data/vault.kdbx` should return `403`.
 
-`data/` must be writable by PHP so it can store `lockout.json`, `backups/` and saves.
+`data/` must be writable by PHP so it can store `lockout.json`, `lastlogin.json`, `backups/` and saves.
 If it isn't, the gate refuses everything.
 
 ## When something changes

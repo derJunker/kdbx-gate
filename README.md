@@ -49,7 +49,7 @@ npm run dev        # build + php -S on http://127.0.0.1:8080 (put a config + vau
    directory is readable, your host ignores `.htaccess`, and you must fix that before
    using the vault. Either move `vault.kdbx` outside the webroot and set `vault_file`
    in `config.php`, or ask your host.
-5. `data/` must be writable by PHP so it can store `lockout.json`, `backups/` and
+5. `data/` must be writable by PHP so it can store `lockout.json`, `lastlogin.json`, `backups/` and
    saves. If it isn't, the gate fails closed.
 
 **Important:** if you change the master password in another KeePass app, run setup
