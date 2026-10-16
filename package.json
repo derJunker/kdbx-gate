@@ -1,0 +1,26 @@
+{
+  "name": "kdbx-gate",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Minimal KeePass (KDBX) web vault for plain PHP hosting: one password, server-side rate-limited gate, client-side decryption.",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "npm run test:client && npm run test:server",
+    "test:client": "node --test \"tests/client/*.test.js\"",
+    "test:server": "node --test \"tests/server/*.test.mjs\"",
+    "dev": "npm run build && php -S 127.0.0.1:8080 -t dist"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "hash-wasm": "^4.12.0",
+    "kdbxweb": "^2.1.1"
+  },
+  "devDependencies": {
+    "@xmldom/xmldom": "^0.7.13",
+    "esbuild": "^0.28.2"
+  }
+}

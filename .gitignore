@@ -1,0 +1,8 @@
+node_modules/
+dist/
+*.kdbx
+!tests/fixtures/*.kdbx
+server/data/config.php
+server/data/lockout.json
+server/data/backups/
+.idea/

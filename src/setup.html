@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- This page never talks to the network. Works from file:// as well. -->
+<meta http-equiv="Content-Security-Policy" content="connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex, nofollow">
+<meta name="color-scheme" content="light dark">
+<title>Vault setup</title>
+<link rel="stylesheet" href="style.css">
+<script src="setup.js" defer></script>
+</head>
+<body>
+<noscript><p class="banner banner-error">This page needs JavaScript.</p></noscript>
+<main class="page">
+  <h1>Vault setup</h1>
+  <p class="muted">Everything happens in this browser tab. Nothing is uploaded. This creates the
+    <code>data/config.php</code> that lets the server check your master password without ever seeing it.</p>
+
+  <form id="setup-form" class="stack" autocomplete="off" novalidate>
+    <label for="setup-kdbx">KeePass database (.kdbx)</label>
+    <input id="setup-kdbx" type="file" accept=".kdbx">
+
+    <label for="setup-password">Master password</label>
+    <input id="setup-password" type="password" autocomplete="current-password" autocapitalize="off" autocorrect="off" spellcheck="false">
+
+    <button id="setup-keyfile-toggle" type="button" class="link" aria-expanded="false" aria-controls="setup-keyfile-row">Database uses a key file</button>
+    <div id="setup-keyfile-row" class="stack" hidden>
+      <label for="setup-keyfile">Key file (only used to check that the database opens)</label>
+      <input id="setup-keyfile" type="file">
+    </div>
+
+    <details class="panel">
+      <summary>Advanced: Argon2id parameters for the server check</summary>
+      <div class="stack">
+        <label for="setup-m">Memory (KiB)</label>
+        <input id="setup-m" type="number" inputmode="numeric" min="8192" max="1048576" value="65536">
+        <label for="setup-t">Iterations</label>
+        <input id="setup-t" type="number" inputmode="numeric" min="1" max="20" value="3">
+        <label for="setup-p">Parallelism</label>
+        <input id="setup-p" type="number" inputmode="numeric" min="1" max="4" value="1">
+        <p class="muted">Defaults: 65536 KiB (64 MiB), 3 iterations, parallelism 1. Every unlock runs this
+          once in the browser, so keep it fast enough for your phone.</p>
+      </div>
+    </details>
+
+    <button id="setup-go" type="submit" class="primary">Check database and create config.php</button>
+  </form>
+  <p id="setup-status" class="status" role="status" aria-live="polite"></p>
+
+  <section id="setup-result" class="stack" hidden aria-label="Result">
+    <h2>data/config.php</h2>
+    <p id="setup-info" class="muted"></p>
+    <textarea id="setup-config" class="mono" rows="14" readonly></textarea>
+    <div class="row">
+      <button id="setup-download" type="button" class="primary">Download config.php</button>
+      <button id="setup-copy" type="button">Copy</button>
+    </div>
+    <h2>Next steps</h2>
+    <ol class="steps">
+      <li>Upload all files of the release (<code>index.html</code>, <code>app.js</code>, <code>api.php</code>,
+        <code>.htaccess</code>, <code>data/</code>, ...) to your web space via FTP. Make sure the hidden
+        <code>.htaccess</code> files are uploaded too.</li>
+      <li>Upload the downloaded <code>config.php</code> into the <code>data/</code> folder.</li>
+      <li>Upload your database into <code>data/</code> and name it <code>vault.kdbx</code>.</li>
+      <li>Open <code>index.html</code> over <strong>https</strong> and unlock with your master password. If a red
+        warning about <code>data/</code> appears, your host ignores <code>.htaccess</code>: fix that before use.</li>
+      <li>If you change the master password later, run this setup again and upload the new <code>config.php</code>.</li>
+    </ol>
+  </section>
+</main>
+</body>
+</html>

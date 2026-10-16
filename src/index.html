@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; connect-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex, nofollow">
+<meta name="color-scheme" content="light dark">
+<title>Vault</title>
+<link rel="stylesheet" href="style.css">
+<script src="app.js" defer></script>
+</head>
+<body>
+<div id="warnings" class="warnings" role="alert"></div>
+<noscript><p class="banner banner-error">This app needs JavaScript.</p></noscript>
+
+<main id="view-lock" class="page lock">
+  <h1 class="lock-title">Vault</h1>
+  <form id="lock-form" class="stack" autocomplete="off" novalidate>
+    <label for="lock-password">Master password</label>
+    <input id="lock-password" name="password" type="password" autocomplete="current-password" autocapitalize="off" autocorrect="off" spellcheck="false" required>
+    <button id="keyfile-toggle" type="button" class="link" aria-expanded="false" aria-controls="keyfile-row">Use a key file</button>
+    <div id="keyfile-row" class="stack" hidden>
+      <label for="lock-keyfile">Key file (only used to decrypt, never uploaded)</label>
+      <input id="lock-keyfile" type="file">
+    </div>
+    <button id="unlock-btn" type="submit" class="primary">Unlock</button>
+  </form>
+  <p id="lock-status" class="status" role="status" aria-live="polite"></p>
+</main>
+
+<div id="view-app" hidden>
+  <header class="topbar">
+    <div class="topbar-row">
+      <span id="vault-name" class="vault-name"></span>
+      <span id="dirty-badge" class="badge" hidden>Unsaved</span>
+      <button id="btn-save" type="button" class="small">Save</button>
+      <button id="btn-lock" type="button" class="small">Lock</button>
+    </div>
+    <div class="topbar-row">
+      <input id="search" type="search" placeholder="Search" aria-label="Search entries" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+    </div>
+  </header>
+
+  <div class="app-body">
+    <nav id="group-tree" class="sidebar" aria-label="Groups"></nav>
+
+    <main class="page">
+      <p id="app-status" class="status" role="status" aria-live="polite"></p>
+
+      <section id="view-list" aria-label="Entries">
+        <nav id="breadcrumb" class="breadcrumb" aria-label="Current group"></nav>
+        <div class="row list-actions">
+          <button id="btn-add" type="button" class="primary">Add entry</button>
+          <button id="btn-group-new" type="button">New group</button>
+          <div id="group-tools" class="group-tools">
+            <button id="btn-group-rename" type="button">Rename</button>
+            <button id="btn-group-delete" type="button" class="danger">Delete group</button>
+          </div>
+        </div>
+        <p id="group-note" class="muted small-text" hidden></p>
+        <p id="list-count" class="muted"></p>
+        <ul id="entry-list" class="entries"></ul>
+        <div class="row footer-actions">
+          <button id="btn-download" type="button">Download encrypted .kdbx</button>
+        </div>
+      </section>
+
+      <section id="view-entry" hidden aria-label="Entry">
+        <div id="entry-detail"></div>
+        <div class="row actions">
+          <button id="btn-entry-back" type="button">Back</button>
+          <button id="btn-entry-edit" type="button" class="primary">Edit</button>
+          <button id="btn-entry-delete" type="button" class="danger">Delete</button>
+        </div>
+      </section>
+
+      <section id="view-edit" hidden aria-label="Edit entry">
+        <h2 id="edit-heading">Edit entry</h2>
+        <form id="edit-form" class="stack" autocomplete="off" novalidate>
+          <label for="edit-title">Title</label>
+          <input id="edit-title" type="text" autocomplete="off">
+
+          <label for="edit-username">Username</label>
+          <input id="edit-username" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+
+          <label for="edit-password">Password</label>
+          <div class="input-group">
+            <input id="edit-password" type="password" autocomplete="new-password" autocapitalize="off" autocorrect="off" spellcheck="false">
+            <button id="edit-password-reveal" type="button" class="small" aria-pressed="false">Show</button>
+          </div>
+          <button id="gen-toggle" type="button" class="link" aria-expanded="false" aria-controls="gen-panel">Generate password</button>
+          <fieldset id="gen-panel" class="panel stack" hidden>
+            <legend>Generator</legend>
+            <label for="gen-length">Length</label>
+            <input id="gen-length" type="number" inputmode="numeric" min="4" max="128" value="20">
+            <div class="checks">
+              <label class="check"><input id="gen-lower" type="checkbox" checked> a-z</label>
+              <label class="check"><input id="gen-upper" type="checkbox" checked> A-Z</label>
+              <label class="check"><input id="gen-digits" type="checkbox" checked> 0-9</label>
+              <label class="check"><input id="gen-symbols" type="checkbox" checked> Symbols</label>
+            </div>
+            <label class="check"><input id="gen-ambiguous" type="checkbox"> Avoid look-alikes (I l 1 O 0 o |)</label>
+            <button id="gen-run" type="button">Generate</button>
+            <p id="gen-info" class="muted"></p>
+          </fieldset>
+
+          <label for="edit-url">URL</label>
+          <input id="edit-url" type="text" inputmode="url" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+
+          <label for="edit-notes">Notes</label>
+          <textarea id="edit-notes" rows="4"></textarea>
+
+          <label for="edit-tags">Tags (comma separated)</label>
+          <input id="edit-tags" type="text" autocomplete="off" autocapitalize="off">
+
+          <label for="edit-group">Group</label>
+          <select id="edit-group"></select>
+
+          <div id="edit-custom" class="stack"></div>
+
+          <div class="row actions">
+            <button id="edit-cancel" type="button">Cancel</button>
+            <button id="edit-submit" type="submit" class="primary">Done</button>
+          </div>
+        </form>
+      </section>
+    </main>
+  </div>
+</div>
+</body>
+</html>

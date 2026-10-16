@@ -1,0 +1,68 @@
+# kdbx-gate: web root configuration (Apache 2.2 and 2.4).
+#
+# Every module-specific block is wrapped in <IfModule> so a missing module never
+# turns into a "500 Internal Server Error". HTTPS is intentionally NOT forced here:
+# on shared hosting behind a TLS-terminating proxy a redirect rule can loop. Enable
+# HTTPS (and its redirect) in your hosting control panel instead.
+#
+# If your host returns a 500 error because "Options" is not allowed in .htaccess,
+# delete the "Options -Indexes" line (and ask the host to disable directory listings).
+
+Options -Indexes
+DirectoryIndex index.html
+
+# --- Never serve vaults, state or lock files, wherever they end up -----------
+<FilesMatch "(?i)\.(kdbx|json|lock)$">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order allow,deny
+        Deny from all
+    </IfModule>
+</FilesMatch>
+
+# --- Never serve dotfiles (.htaccess, .user.ini, temp files, ...) --------------
+<FilesMatch "^\.">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order allow,deny
+        Deny from all
+    </IfModule>
+</FilesMatch>
+
+# ... and anything below a dot-directory (e.g. .git/), except .well-known (ACME).
+# mod_alias instead of mod_rewrite: works without FollowSymLinks.
+<IfModule mod_alias.c>
+    RedirectMatch 404 "/\.(?!well-known(/|$))"
+</IfModule>
+
+# --- Security headers -----------------------------------------------------------
+<IfModule mod_headers.c>
+    Header always set Content-Security-Policy "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data:; connect-src 'self'; form-action 'none'; frame-ancestors 'none'; base-uri 'none'"
+    Header always set X-Frame-Options "DENY"
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set Referrer-Policy "no-referrer"
+    Header always set Permissions-Policy "camera=(), microphone=(), geolocation=()"
+    Header always set Cross-Origin-Opener-Policy "same-origin"
+    Header always set Cross-Origin-Resource-Policy "same-origin"
+    Header always set X-Robots-Tag "noindex, nofollow"
+    Header always unset X-Powered-By
+    Header unset X-Powered-By
+</IfModule>
+
+# --- Never show PHP errors to clients (only effective with mod_php) -------------
+<IfModule mod_php.c>
+    php_flag display_errors off
+    php_flag display_startup_errors off
+</IfModule>
+<IfModule mod_php7.c>
+    php_flag display_errors off
+    php_flag display_startup_errors off
+</IfModule>
+<IfModule mod_php5.c>
+    php_flag display_errors off
+    php_flag display_startup_errors off
+</IfModule>
