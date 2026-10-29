@@ -14,6 +14,9 @@ deployable over FTP. It needs no database, no SSH, no cron and no Composer.
   The server never sees your master password or the decrypted data.
 - The file stays a normal `.kdbx`, so KeePassXC, KeePassDX and other KeePass apps
   keep working with it.
+- **2FA backup.** Import your 2FAS backup file or Ente Auth plain text export (or any
+  `otpauth://` links) as entries, and show any of them as a QR code again to restore it
+  to a phone.
 
 - **[`docs/GUIDE.md`](docs/GUIDE.md):** how it works in plain terms, what `config.php`
   is, setup, and what to do when something changes.
@@ -71,5 +74,6 @@ is intentional, because it means guessing stays slow. If it happens, rename or d
 
 ## License
 
-MIT. Bundles [kdbxweb](https://github.com/keeweb/kdbxweb) (MIT) and
-[hash-wasm](https://github.com/Daninet/hash-wasm) (MIT).
+MIT. Bundles [kdbxweb](https://github.com/keeweb/kdbxweb) (MIT),
+[hash-wasm](https://github.com/Daninet/hash-wasm) (MIT) and
+[qr](https://github.com/paulmillr/qr) (MIT or Apache-2.0).

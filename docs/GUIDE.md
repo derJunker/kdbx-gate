@@ -101,6 +101,31 @@ same `config.php` keeps working when the vault's contents or encryption settings
 `data/` must be writable by PHP so it can store `lockout.json`, `lastlogin.json`, `backups/` and saves.
 If it isn't, the gate refuses everything.
 
+## Backing up 2FA codes
+
+**Import 2FA codes** (below the entry list) turns an authenticator app's export into vault entries:
+
+- **2FAS:** Settings → 2FAS Backup → Export (with or without a backup password), then choose the `.2fas` file.
+  Doing this on the phone itself works: open the vault in the phone's browser and pick the saved file.
+- **Ente Auth:** Settings → Data → Export → **Plain text**, then choose the `.txt` file. Its encrypted export
+  is not supported.
+- **Anything else:** paste `otpauth://` links, or choose a text file of them.
+
+Using one app for personal and one for work codes? Create a group for each first (e.g. `2FA/Personal` and
+`2FA/Work`) and pick it under **Add to group** for each import. Delete unencrypted export files from the phone
+afterwards.
+
+Google Authenticator's export is only QR codes. Move those accounts into 2FAS first (2FAS can scan Google
+Authenticator's export QR codes) or Ente Auth, then back up from there.
+
+Files are read in the browser. The codes become entries (in the group `2FA` unless you pick
+another one) and reach the server only inside the encrypted vault when you tap **Save**. Each entry has an
+`otp` field, which KeePassXC, KeePassDX and Strongbox use to show the codes, plus KeePass 2's `TimeOtp-*`
+fields. To move a code back into a phone app, open the entry and tap **Show QR code**.
+
+Keep in mind that 2FA secrets in the same vault as the passwords mean that whoever opens the vault has
+both factors.
+
 ## When something changes
 
 | Situation | What to do |

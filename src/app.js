@@ -6,6 +6,10 @@ import { generatePassword, estimateBits } from './passgen.js';
 import { copyText } from './clipboard.js';
 import { lastLoginText } from './lastlogin.js';
 import { byId, h, show, mmss, downloadBlob, setStatus, errorMessage } from './dom.js';
+import {
+  parseLinks, isTwoFasBackup, isEncryptedTwoFas, isEnteEncryptedExport, readTwoFasBackup, otpFields, tokenFromEntry, toOtpauthUri,
+} from './otp.js';
+import { drawQr } from './qr.js';
 
 const AUTO_LOCK_MS = 5 * 60 * 1000;
 const MASK = '••••••••••';
@@ -17,6 +21,8 @@ const BIN_NOTE =
 const DECRYPT_FAILED =
   'Server accepted the password but the vault could not be decrypted. ' +
   'Re-run setup if you changed the master password, or provide the key file.';
+const IMPORT_GROUP = '2FA'; // default target group for imported codes (created in the root if missing)
+const NEW_GROUP = 'new'; // <option> value for "create IMPORT_GROUP"; group ids are 24-char base64
 
 const api = createApi({ baseUrl: 'api.php', location: window.location });
 
@@ -34,6 +40,7 @@ const state = {
   countdown: null,
   lastActivity: Date.now(),
   statusTimer: null,
+  importItems: [], // 2FA import: [{token, duplicate, selected}], one per secret
 };
 
 let el = {};
@@ -48,6 +55,9 @@ function cacheElements() {
     'edit-form', 'edit-title', 'edit-username', 'edit-password', 'edit-password-reveal', 'gen-toggle',
     'gen-panel', 'gen-length', 'gen-lower', 'gen-upper', 'gen-digits', 'gen-symbols', 'gen-ambiguous',
     'gen-run', 'gen-info', 'edit-url', 'edit-notes', 'edit-tags', 'edit-group', 'edit-custom', 'edit-cancel',
+    'btn-import', 'view-import', 'import-form', 'import-files', 'import-text', 'import-password-row',
+    'import-password', 'import-read', 'import-notes', 'import-result', 'import-summary', 'import-list',
+    'import-group', 'import-cancel', 'import-submit',
   ];
   el = {};
   for (const id of ids) el[id.replace(/-([a-z])/g, (_, c) => c.toUpperCase())] = byId(id);
@@ -99,7 +109,7 @@ function setBusy(busy) {
   el.unlockBtn.disabled = busy || !state.secure || state.retryUntil > Date.now();
   const buttons = [
     el.btnSave, el.btnLock, el.btnDownload, el.btnAdd, el.btnEntryEdit, el.btnEntryDelete,
-    el.btnGroupNew, el.btnGroupRename, el.btnGroupDelete,
+    el.btnGroupNew, el.btnGroupRename, el.btnGroupDelete, el.btnImport, el.importRead,
   ];
   for (const b of buttons) {
     b.disabled = busy;
@@ -259,6 +269,7 @@ function lock(message = '') {
   el.editCustom.replaceChildren();
   el.editGroup.replaceChildren();
   el.editForm.reset();
+  resetImport();
   el.search.value = '';
   el.vaultName.textContent = '';
   el.lastLogin.textContent = '';
@@ -293,6 +304,7 @@ function showView(name) {
   show(el.viewList, name === 'list');
   show(el.viewEntry, name === 'entry');
   show(el.viewEdit, name === 'edit');
+  show(el.viewImport, name === 'import');
   window.scrollTo(0, 0);
 }
 
@@ -307,6 +319,7 @@ function showList() {
   state.editingId = null;
   el.entryDetail.replaceChildren();
   el.editCustom.replaceChildren();
+  resetImport();
   renderList();
   showView('list');
 }
@@ -485,6 +498,7 @@ function openGroup(id) {
     if (!window.confirm('Leave the editor? Changes you have not applied with Done are discarded.')) return false;
     el.editPassword.value = '';
   }
+  if (importPending() && !window.confirm('Leave the import? The codes read so far are discarded.')) return false;
   state.groupId = id;
   try {
     for (const p of state.vault.getGroupPath(id)) state.expanded.add(p.id);
@@ -642,6 +656,51 @@ function urlRow(url) {
   return h('div', { class: 'field' }, h('div', { class: 'field-label', text: 'URL' }), value, h('div', { class: 'field-actions' }, copyButton('URL', () => url)));
 }
 
+/** "TOTP, 30 s, 6 digits" */
+function describeToken(token) {
+  if (token.type === 'steam') return 'Steam Guard';
+  const kind = token.type === 'hotp' ? `HOTP, counter ${token.counter}` : `TOTP, ${token.period} s`;
+  return `${kind}, ${token.digits} digits${token.algorithm === 'SHA1' ? '' : `, ${token.algorithm}`}`;
+}
+
+/** The entry's 2FA secret as a QR code on demand, to scan it back into an authenticator app. */
+function otpQrRow(description, getToken) {
+  const canvas = h('canvas', { role: 'img', 'aria-label': 'QR code with the 2FA secret' });
+  const box = h(
+    'div',
+    { class: 'qr-box', hidden: true },
+    canvas,
+    h('p', { class: 'muted small-text', text: 'Scan it with Google Authenticator, 2FAS or another authenticator app to restore the code there.' }),
+  );
+  const toggle = h('button', {
+    type: 'button',
+    class: 'small',
+    text: 'Show QR code',
+    'aria-expanded': 'false',
+    onclick: () => {
+      const open = box.hidden;
+      if (open) {
+        const token = getToken();
+        if (!token) return;
+        drawQr(canvas, toOtpauthUri(token));
+      } else {
+        canvas.width = 0; // clears the drawing
+      }
+      show(box, open);
+      toggle.textContent = open ? 'Hide QR code' : 'Show QR code';
+      toggle.setAttribute('aria-expanded', String(open));
+    },
+  });
+  return h(
+    'div',
+    { class: 'field' },
+    h('div', { class: 'field-label', text: '2FA' }),
+    h('div', { class: 'field-value', text: description }),
+    h('div', { class: 'field-actions' }, toggle),
+    box,
+  );
+}
+
 function formatDate(d) {
   return d instanceof Date && !Number.isNaN(d.getTime()) ? d.toLocaleString() : '';
 }
@@ -675,6 +734,10 @@ function showEntry(id) {
       nodes.push(textRow(field.name, field.value, { copy: true }));
     }
   }
+  const token = tokenFromEntry(entry);
+  if (token) {
+    nodes.push(otpQrRow(describeToken(token), () => (state.vault === vault ? tokenFromEntry(vault.getEntry(id)) : null)));
+  }
   const modified = formatDate(entry.modified);
   if (modified) nodes.push(h('p', { class: 'muted small-text', text: `Modified ${modified}` }));
   el.entryDetail.replaceChildren(...nodes.filter(Boolean));
@@ -694,7 +757,7 @@ function setPasswordVisible(visible) {
  * Group options indented by depth (tree order, recycle bin excluded). `keepLabel` adds a first option
  * with an empty value ("do not move"), used for entries in the recycle bin.
  */
-function fillGroupSelect(selectedId, keepLabel = '') {
+function fillGroupSelect(selectedId, keepLabel = '', select = el.editGroup) {
   const frag = document.createDocumentFragment();
   if (keepLabel) frag.append(h('option', { value: '', text: keepLabel }));
   for (const g of state.vault.listGroups()) {
@@ -703,7 +766,7 @@ function fillGroupSelect(selectedId, keepLabel = '') {
     if (g.id === selectedId) opt.selected = true;
     frag.append(opt);
   }
-  el.editGroup.replaceChildren(frag);
+  select.replaceChildren(frag);
 }
 
 /** New entries go to the group being viewed, or to the root when that is the recycle bin. */
@@ -852,6 +915,208 @@ function onDelete() {
   }
 }
 
+// ---------------------------------------------------------------- 2FA import
+
+/** True while the import view holds codes that were read but not added yet. */
+function importPending() {
+  return !el.viewImport.hidden && state.importItems.length > 0;
+}
+
+/** Drops everything the import view has read, secrets included. */
+function resetImport() {
+  state.importItems = [];
+  el.importForm.reset();
+  show(el.importPasswordRow, false);
+  el.importNotes.replaceChildren();
+  show(el.importNotes, false);
+  el.importList.replaceChildren();
+  el.importGroup.replaceChildren();
+  show(el.importResult, false);
+  el.importSubmit.textContent = 'Add entries';
+  el.importSubmit.disabled = true;
+}
+
+function showImport() {
+  if (!state.vault || state.busy) return;
+  state.currentId = null;
+  state.editingId = null;
+  el.entryDetail.replaceChildren();
+  resetImport();
+  showView('import');
+}
+
+/** Tokens from one chosen file, or null if it is an encrypted 2FAS backup and no password is entered. */
+async function readImportFile(file, password) {
+  const text = await file.text();
+  if (!text.trim().startsWith('{')) return parseLinks(text);
+  let json;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    throw new Error('Not a valid backup file.');
+  }
+  if (isEnteEncryptedExport(json)) throw new Error('This is an encrypted Ente Auth export. Export as plain text instead.');
+  if (!isTwoFasBackup(json)) throw new Error('Not a 2FAS backup.');
+  if (isEncryptedTwoFas(json) && !password) return null;
+  return readTwoFasBackup(json, password);
+}
+
+/** Secrets of the 2FA codes already in the vault (outside the recycle bin). */
+function secretsInVault() {
+  const secrets = new Set();
+  for (const { id } of state.vault.listEntries()) {
+    const token = tokenFromEntry(state.vault.getEntry(id));
+    if (token) secrets.add(token.secret);
+  }
+  return secrets;
+}
+
+/** Adds read tokens, skipping secrets read before; returns how many were new. */
+function addImported(tokens, inVault) {
+  const known = new Set(state.importItems.map((item) => item.token.secret));
+  let added = 0;
+  for (const token of tokens) {
+    if (known.has(token.secret)) continue;
+    known.add(token.secret);
+    const duplicate = inVault.has(token.secret);
+    state.importItems.push({ token, duplicate, selected: !duplicate });
+    added++;
+  }
+  return added;
+}
+
+async function onImportRead(event) {
+  event.preventDefault();
+  if (!state.vault || state.busy) return;
+  const files = [...el.importFiles.files];
+  const text = el.importText.value;
+  if (!files.length && !text.trim()) {
+    appStatus('error', 'Choose files or paste links first.', 4000);
+    return;
+  }
+  const vault = state.vault;
+  const inVault = secretsInVault();
+  const notes = [];
+  let found = 0;
+  let failed = false;
+  let needsPassword = false;
+  setBusy(true);
+  try {
+    for (const [i, file] of files.entries()) {
+      appStatus('info', `Reading ${file.name} (${i + 1} of ${files.length})…`);
+      try {
+        const result = await readImportFile(file, el.importPassword.value);
+        if (state.vault !== vault) return; // locked while reading
+        if (result) found += addImported(result, inVault);
+        else needsPassword = true;
+      } catch (err) {
+        failed = true;
+        notes.push({ type: 'error', text: `${file.name}: ${errorMessage(err)}` });
+      }
+    }
+    if (text.trim()) {
+      try {
+        found += addImported(parseLinks(text), inVault);
+        el.importText.value = '';
+      } catch (err) {
+        failed = true;
+        notes.push({ type: 'error', text: `Pasted text: ${errorMessage(err)}` });
+      }
+    }
+  } finally {
+    setBusy(false);
+  }
+  if (state.vault !== vault) return;
+  if (!failed && !needsPassword) el.importFiles.value = '';
+  if (needsPassword) {
+    show(el.importPasswordRow, true);
+    notes.push({ type: 'info', text: 'The 2FAS backup is encrypted. Enter its password and tap Read codes again.' });
+    el.importPassword.focus();
+  }
+  appStatus(found ? 'ok' : 'info', found ? `${plural(found, 'new code', 'new codes')} read.` : 'No new codes read.', 4000);
+  renderImport(notes);
+}
+
+/** Offers the existing IMPORT_GROUP, or creating it, as the default target. */
+function fillImportGroups() {
+  const existing = state.vault.listGroups().find((g) => g.depth > 0 && g.name === IMPORT_GROUP);
+  fillGroupSelect(existing ? existing.id : '', '', el.importGroup);
+  if (!existing) {
+    el.importGroup.prepend(h('option', { value: NEW_GROUP, text: `New group "${IMPORT_GROUP}"` }));
+    el.importGroup.value = NEW_GROUP;
+  }
+}
+
+function importRow(item, index) {
+  const { token } = item;
+  const sub = [token.account, describeToken(token), item.duplicate && 'already in the vault'].filter(Boolean).join(' · ');
+  return h(
+    'li',
+    null,
+    h(
+      'label',
+      { class: 'check import-row' },
+      h('input', { type: 'checkbox', checked: item.selected, dataset: { index: String(index) } }),
+      h(
+        'span',
+        { class: 'row-text' },
+        h('span', { class: 'entry-title', text: token.title || '(untitled)' }),
+        h('span', { class: 'entry-sub', text: sub }),
+      ),
+    ),
+  );
+}
+
+function updateImportSubmit() {
+  const n = state.importItems.filter((item) => item.selected).length;
+  el.importSubmit.textContent = n ? `Add ${plural(n, 'entry', 'entries')}` : 'Add entries';
+  el.importSubmit.disabled = n === 0;
+}
+
+/** Notes of the last read, then the codes read so far. */
+function renderImport(notes) {
+  el.importNotes.replaceChildren(...notes.map((n) => h('li', { dataset: { type: n.type }, text: n.text })));
+  show(el.importNotes, notes.length > 0);
+
+  const items = state.importItems;
+  show(el.importResult, items.length > 0);
+  if (items.length && !el.importGroup.options.length) fillImportGroups();
+  const duplicates = items.filter((item) => item.duplicate).length;
+  el.importSummary.textContent =
+    `${plural(items.length, 'code', 'codes')} found` +
+    (duplicates ? `, ${duplicates} of them already in the vault (not selected)` : '') +
+    '.';
+  el.importList.replaceChildren(...items.map(importRow));
+  updateImportSubmit();
+}
+
+function onImportListChange(event) {
+  const box = event.target;
+  if (!(box instanceof HTMLInputElement) || !box.dataset.index) return;
+  const item = state.importItems[Number(box.dataset.index)];
+  if (item) item.selected = box.checked;
+  updateImportSubmit();
+}
+
+function onImportSubmit() {
+  if (!state.vault || state.busy) return;
+  const items = state.importItems.filter((item) => item.selected);
+  if (!items.length) return;
+  try {
+    let groupId = el.importGroup.value;
+    if (groupId === NEW_GROUP) groupId = state.vault.createGroup(state.vault.rootGroupId(), IMPORT_GROUP);
+    for (const { token } of items) {
+      state.vault.createEntry(groupId, { title: token.title, username: token.account, custom: otpFields(token) });
+    }
+    resetImport();
+    updateDirty();
+    openGroup(groupId);
+    appStatus('info', `${plural(items.length, 'entry', 'entries')} added. Tap Save to store them on the server.`, 6000);
+  } catch (err) {
+    appStatus('error', errorMessage(err));
+  }
+}
+
 // ---------------------------------------------------------------- save / download
 
 function describeSaveError(err) {
@@ -973,7 +1238,7 @@ function bindEvents() {
   el.btnAdd.addEventListener('click', () => showEdit(null));
   el.search.addEventListener('input', () => {
     if (el.viewList.hidden) {
-      if (!el.viewEdit.hidden) return; // do not discard an edit in progress
+      if (!el.viewEdit.hidden || importPending()) return; // do not discard an edit or import in progress
       showList();
     } else {
       renderList();
@@ -995,6 +1260,12 @@ function bindEvents() {
   el.editPasswordReveal.addEventListener('click', () => setPasswordVisible(el.editPassword.type === 'password'));
   el.genToggle.addEventListener('click', onGenToggle);
   el.genRun.addEventListener('click', runGenerator);
+
+  el.btnImport.addEventListener('click', showImport);
+  el.importForm.addEventListener('submit', onImportRead);
+  el.importList.addEventListener('change', onImportListChange);
+  el.importCancel.addEventListener('click', showList);
+  el.importSubmit.addEventListener('click', onImportSubmit);
 
   document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape' && state.vault && !el.viewEntry.hidden) showList();

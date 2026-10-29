@@ -185,7 +185,19 @@ else:
   and the recycle bin itself are protected), the recycle bin shown as a group (view
   deleted entries, restore by moving them to another group), a password generator, save
   (with conflict handling), download the encrypted `.kdbx`, lock.
+- 2FA import (`src/otp.js`, `src/qr.js`): reads 2FAS backups (`.2fas` JSON; a password-encrypted
+  one holds `servicesEncrypted` = `base64(ciphertext+tag):base64(salt):base64(iv)`, AES-256-GCM with a
+  PBKDF2-SHA256 key, 10000 rounds, decrypted with WebCrypto) and `otpauth://` links, pasted or in a text
+  file (Ente Auth's plain text export is one link per line; its encrypted export is recognised and rejected). The file input has no `accept` filter, since mobile pickers may grey out the unknown `.2fas` type.
+  Nothing is uploaded until Save. The preview deselects codes whose secret is
+  already in the vault. Each selected code becomes an entry (title = service, username = account, default
+  group `2FA`) with a protected `otp` field holding an `otpauth://` link (KeePassXC, KeePassDX,
+  Strongbox) plus KeePass 2's own fields where KeePass 2 supports the settings: TOTP with SHA-1/256/512
+  and up to 8 digits gets `TimeOtp-Secret-Base32` (and `TimeOtp-Length`/`-Period`/`-Algorithm` when not
+  6/30/SHA-1); HOTP with SHA-1 and 6 digits gets `HmacOtp-Secret-Base32` and `HmacOtp-Counter`.
+- Entries with an `otp` link or KeePass 2 OTP fields offer "Show QR code": the `otpauth://` link as a QR
+  code drawn on a canvas with the bundled `qr` library, to scan the code back into an authenticator app.
 - Copy buttons put the value on the clipboard and leave it there (no auto-clear). The
   app auto-locks after 5 min of inactivity and drops all decrypted state.
 - CSP-compatible: no inline scripts or styles and no eval. WebAssembly needs
-  `'wasm-unsafe-eval'`.
+  `'wasm-unsafe-eval'`. QR codes are drawn on a canvas, so `img-src` needs neither `data:` nor `blob:`.

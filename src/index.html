@@ -67,6 +67,42 @@
         <ul id="entry-list" class="entries"></ul>
         <div class="row footer-actions">
           <button id="btn-download" type="button">Download encrypted .kdbx</button>
+          <button id="btn-import" type="button">Import 2FA codes</button>
+        </div>
+      </section>
+
+      <section id="view-import" hidden aria-label="Import 2FA codes">
+        <h2>Import 2FA codes</h2>
+        <ul class="steps">
+          <li><strong>2FAS:</strong> Settings → 2FAS Backup → Export, save the file, then choose the
+            <code>.2fas</code> file below.</li>
+          <li><strong>Ente Auth:</strong> Settings → Data → Export → Plain text, then choose the <code>.txt</code>
+            file below.</li>
+          <li><strong>Other apps:</strong> paste their <code>otpauth://</code> links.</li>
+        </ul>
+        <p class="muted small-text">Files are only read in this browser. The codes reach the server
+          inside the encrypted vault when you tap Save.</p>
+        <form id="import-form" class="stack" autocomplete="off" novalidate>
+          <label for="import-files">2FAS backup or text file with links</label>
+          <input id="import-files" type="file" multiple>
+          <label for="import-text">Or paste otpauth:// links</label>
+          <textarea id="import-text" class="mono" rows="3" autocapitalize="off" autocorrect="off" spellcheck="false"></textarea>
+          <div id="import-password-row" class="stack" hidden>
+            <label for="import-password">Password of the 2FAS backup</label>
+            <input id="import-password" type="password" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+          </div>
+          <button id="import-read" type="submit">Read codes</button>
+        </form>
+        <ul id="import-notes" class="import-notes" hidden></ul>
+        <div id="import-result" class="stack" hidden>
+          <p id="import-summary" class="muted"></p>
+          <ul id="import-list" class="entries"></ul>
+          <label for="import-group">Add to group</label>
+          <select id="import-group"></select>
+        </div>
+        <div class="row actions">
+          <button id="import-cancel" type="button">Cancel</button>
+          <button id="import-submit" type="button" class="primary" disabled>Add entries</button>
         </div>
       </section>
 
