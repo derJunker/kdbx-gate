@@ -186,6 +186,82 @@ test('merge: remote encrypted with another password -> InvalidKey', async () => 
   await assert.rejects(a.merge(other), (err) => isInvalidKeyError(err));
 });
 
+/** Edits GitHub, adds "New" and group "Work", recycles Mail and group Banking, moves Visa, purges Old. */
+function makeChanges(vault) {
+  const ids = Object.fromEntries(vault.listEntries().map((e) => [e.title, e.id]));
+  const group = (path) => vault.listGroups().find((g) => g.path === path).id;
+  vault.updateEntry(ids.GitHub, { notes: 'edited' });
+  vault.createEntry(null, { title: 'New' });
+  vault.createGroup(null, 'Work');
+  vault.deleteEntry(ids.Mail);
+  vault.updateEntry(ids.Visa, { groupId: group('Email') });
+  vault.deleteGroup(group('Banking')); // Cards goes along without being listed
+  const old = vault.getGroupContents(vault.recycleBinId()).entries.find((e) => e.title === 'Old');
+  vault.deleteEntry(old.id); // already in the bin: permanent
+}
+
+const EXPECTED_CHANGES = [
+  ['added', 'entry', 'New'],
+  ['added', 'group', 'Work'],
+  ['edited', 'entry', 'GitHub'],
+  ['moved', 'entry', 'Visa'],
+  ['recycled', 'group', 'Banking'],
+  ['recycled', 'entry', 'Mail'],
+  ['deleted', 'entry', 'Old'],
+];
+const changeList = (changes) => changes.map((c) => [c.change, c.kind, c.title]);
+
+test('changes: listed against the opened version, reset by markSaved', async () => {
+  const vault = await Vault.open(await makeDb(), PASSWORD);
+  assert.deepEqual(vault.changes(), []);
+  makeChanges(vault);
+  assert.deepEqual(changeList(vault.changes()), EXPECTED_CHANGES);
+  await vault.save();
+  vault.markSaved();
+  assert.deepEqual(vault.changes(), []);
+});
+
+test('changesSince and openVersion: diff of two saved versions', async () => {
+  const base = await makeDb();
+  const vault = await Vault.open(base, PASSWORD);
+  makeChanges(vault);
+  const saved = await vault.openVersion(await vault.save());
+  const before = await saved.openVersion(base); // the buffer the vault was opened from is still usable
+  assert.deepEqual(changeList(saved.changesSince(before)), EXPECTED_CHANGES);
+  assert.deepEqual(before.changesSince(before), []);
+  await assert.rejects(saved.openVersion(await makeDb({ password: 'different' })), (err) => isInvalidKeyError(err));
+});
+
+test('changes after a merge: only the local edits, not the remote ones', async () => {
+  const base = await makeDb();
+  const a = await Vault.open(base, PASSWORD);
+  const b = await Vault.open(base, PASSWORD);
+  const ids = Object.fromEntries(a.listEntries().map((e) => [e.title, e.id]));
+  b.updateEntry(ids.Visa, { username: '5500' });
+  b.createEntry(null, { title: 'From B' });
+  a.updateEntry(ids.GitHub, { notes: 'edited on A' });
+  await a.merge(await b.save());
+  assert.equal(a.getEntry(ids.Visa).username, '5500');
+  assert.deepEqual(changeList(a.changes()), [['edited', 'entry', 'GitHub']]);
+});
+
+test('mergeVersion: restores unsaved changes into a fresh copy of the server version', async () => {
+  const base = await makeDb();
+  const session = await Vault.open(base, PASSWORD);
+  makeChanges(session);
+  const unsaved = await session.save();
+
+  const server = await Vault.open(base, PASSWORD);
+  server.mergeVersion(await server.openVersion(unsaved));
+  assert.equal(server.dirty, true);
+  assert.deepEqual(changeList(server.changes()), EXPECTED_CHANGES);
+  assert.deepEqual(server.listEntries().map((e) => [e.title, e.groupPath]), [
+    ['GitHub', 'Test DB'],
+    ['New', 'Test DB'],
+    ['Visa', 'Email'],
+  ]);
+});
+
 test('Argon2 adapter: types, KiB units and version check', async () => {
   const pw = new TextEncoder().encode('password').buffer;
   const salt = new TextEncoder().encode('somesaltsomesalt').buffer;

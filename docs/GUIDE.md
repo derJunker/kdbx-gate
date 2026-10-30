@@ -17,7 +17,12 @@ what to do when something changes. For the exact protocol and API, see [`SPEC.md
    ever holds the encrypted `.kdbx`.
 5. **Saving works the same way in reverse.** The browser encrypts the vault and uploads
    it. The server keeps the previous version in `data/backups/` (the newest 10).
-6. **You see when the vault was last opened.** Each successful unlock stores its time
+6. **Locking never loses changes by accident.** After 10 minutes without use, the vault
+   locks itself and saves unsaved changes on the way. The next unlock in that tab lists
+   what was saved and lets you **Revert** it. **Lock** asks whether to save or discard.
+   Reloading or closing the tab drops the revert offer, but the earlier version is still
+   in `data/backups/`.
+7. **You see when the vault was last opened.** Each successful unlock stores its time
    and browser (User-Agent, nothing else) in `data/lastlogin.json`. The top bar of the
    unlocked app shows the *previous* one, e.g. "Last login: 16 Oct 2026, 14:03 · Firefox
    on Linux". If you don't recognise it, someone else knows your password: change it.

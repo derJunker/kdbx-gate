@@ -59,6 +59,56 @@ function compareTitles(a, b) {
   return a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }) || a.id.localeCompare(b.id);
 }
 
+/**
+ * Every group and entry by uuid: {kind, title, mod, parent, inBin, listed}. The root and the recycle bin
+ * itself are kept (as parents) but not listed as changes.
+ */
+function snapshot(db) {
+  const map = new Map();
+  const binId = db.meta.recycleBinUuid?.id;
+  const time = (item) => item.times.lastModTime?.getTime() ?? 0;
+  const walk = (group, parent, inBin) => {
+    const id = group.uuid.id;
+    const isBin = id === binId;
+    map.set(id, { kind: 'group', title: group.name || '(unnamed)', mod: time(group), parent, inBin, listed: Boolean(parent) && !isBin });
+    for (const entry of group.entries) {
+      const title = fieldText(entry.fields.get('Title')) || '(untitled)';
+      map.set(entry.uuid.id, { kind: 'entry', title, mod: time(entry), parent: id, inBin: inBin || isBin, listed: true });
+    }
+    for (const child of group.groups) walk(child, id, inBin || isBin);
+  };
+  walk(db.getDefaultGroup(), '', false);
+  return map;
+}
+
+const CHANGE_ORDER = ['added', 'edited', 'moved', 'recycled', 'deleted'];
+
+/**
+ * What turns snapshot `before` into `after`: [{id, kind, title, change}], change one of CHANGE_ORDER.
+ * Items that only moved along with their group (into the bin, or deleted with it) are not listed.
+ */
+function diffSnapshots(before, after) {
+  const out = [];
+  for (const [id, a] of after) {
+    if (!a.listed) continue;
+    const b = before.get(id);
+    let change = '';
+    if (!b) change = a.inBin ? '' : 'added';
+    else if (a.parent !== b.parent && a.inBin && !b.inBin) change = 'recycled';
+    else if (a.mod !== b.mod) change = 'edited';
+    else if (a.parent !== b.parent) change = 'moved';
+    if (change) out.push({ id, kind: a.kind, title: a.title, change });
+  }
+  for (const [id, b] of before) {
+    if (b.listed && !after.has(id) && after.has(b.parent)) out.push({ id, kind: b.kind, title: b.title, change: 'deleted' });
+  }
+  return out.sort(
+    (x, y) =>
+      CHANGE_ORDER.indexOf(x.change) - CHANGE_ORDER.indexOf(y.change) ||
+      x.title.localeCompare(y.title, undefined, { sensitivity: 'base' }),
+  );
+}
+
 function makeCredentials(password, keyFile) {
   const pv = password instanceof ProtectedValue ? password : ProtectedValue.fromString(String(password ?? ''));
   const kf = keyFile ? new Uint8Array(toArrayBuffer(keyFile)) : null;
@@ -87,6 +137,7 @@ export class Vault {
     this.db = db;
     this.dirty = false;
     this._summaries = null;
+    this._base = snapshot(db); // the server version: as opened, last saved or last merged
   }
 
   /** Decrypts KDBX bytes. Throws kdbxweb.KdbxError (code InvalidKey on wrong credentials). */
@@ -100,6 +151,12 @@ export class Vault {
   static fromDb(db) {
     installArgon2();
     return new Vault(db);
+  }
+
+  /** Decrypts another version of this database (e.g. an earlier save) with the same credentials. */
+  async openVersion(data) {
+    installArgon2();
+    return new Vault(await Kdbx.load(toArrayBuffer(data), this.db.credentials));
   }
 
   get name() {
@@ -516,19 +573,42 @@ export class Vault {
   async merge(remoteData) {
     installArgon2();
     const remote = await Kdbx.load(toArrayBuffer(remoteData), this.db.credentials);
+    const base = snapshot(remote);
     this.db.merge(remote);
+    this._base = base;
     this._changed();
+  }
+
+  /**
+   * Merges another local version (e.g. changes an earlier session could not upload) into this one.
+   * The result is unsaved; `other` must not be used afterwards.
+   */
+  mergeVersion(other) {
+    this.db.merge(other.db);
+    this._changed();
+  }
+
+  /** Entries and groups changed since the version opened, last saved or merged: [{id, kind, title, change}]. */
+  changes() {
+    return diffSnapshots(this._base, snapshot(this.db));
+  }
+
+  /** Entries and groups that differ from `older`, another version of this database. */
+  changesSince(older) {
+    return diffSnapshots(snapshot(older.db), snapshot(this.db));
   }
 
   /** Call after the server accepted the saved bytes. */
   markSaved() {
     this.db.removeLocalEditState();
     this.dirty = false;
+    this._base = snapshot(this.db);
   }
 
   close() {
     this.db = null;
     this._summaries = null;
+    this._base = null;
     this.dirty = false;
   }
 }

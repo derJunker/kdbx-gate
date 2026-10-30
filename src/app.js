@@ -11,7 +11,7 @@ import {
 } from './otp.js';
 import { drawQr } from './qr.js';
 
-const AUTO_LOCK_MS = 5 * 60 * 1000;
+const AUTO_LOCK_MINUTES = 10;
 const MASK = '••••••••••';
 const MAX_TREE_DEPTH = 6; // deeper sidebar levels share the last indentation step (CSS .depth-6)
 const INDENT = '   '; // per level in the group <select>
@@ -23,6 +23,14 @@ const DECRYPT_FAILED =
   'Re-run setup if you changed the master password, or provide the key file.';
 const IMPORT_GROUP = '2FA'; // default target group for imported codes (created in the root if missing)
 const NEW_GROUP = 'new'; // <option> value for "create IMPORT_GROUP"; group ids are 24-char base64
+const CHANGE_LABELS = {
+  added: 'Added',
+  edited: 'Edited',
+  moved: 'Moved',
+  recycled: 'Moved to the recycle bin',
+  deleted: 'Deleted permanently',
+};
+const MAX_LISTED_CHANGES = 30;
 
 const api = createApi({ baseUrl: 'api.php', location: window.location });
 
@@ -30,6 +38,7 @@ const state = {
   secure: false,
   token: null,
   rev: null,
+  baseData: null, // encrypted bytes of the server version `rev` (what a revert goes back to)
   vault: null,
   currentId: null, // entry shown in the detail view
   editingId: null, // entry being edited (null = new entry)
@@ -41,6 +50,10 @@ const state = {
   lastActivity: Date.now(),
   statusTimer: null,
   importItems: [], // 2FA import: [{token, duplicate, selected}], one per secret
+  autosave: null, // promise of the save started by an auto-lock
+  // Left by an auto-lock for the next unlock in this tab (encrypted bytes only, no token):
+  // {type: 'saved', at, revertData, rev} or {type: 'unsaved', at, data, baseData, baseRev, reason}
+  pending: null,
 };
 
 let el = {};
@@ -58,6 +71,7 @@ function cacheElements() {
     'btn-import', 'view-import', 'import-form', 'import-files', 'import-text', 'import-password-row',
     'import-password', 'import-read', 'import-notes', 'import-result', 'import-summary', 'import-list',
     'import-group', 'import-cancel', 'import-submit',
+    'dialog', 'dialog-title', 'dialog-text', 'dialog-changes', 'dialog-actions',
   ];
   el = {};
   for (const id of ids) el[id.replace(/-([a-z])/g, (_, c) => c.toUpperCase())] = byId(id);
@@ -196,6 +210,10 @@ async function onUnlock(event) {
   }
   setBusy(true);
   try {
+    if (state.autosave) {
+      lockStatus('info', 'Saving your changes from the last session…');
+      await state.autosave;
+    }
     let keyFile = null;
     const file = !el.keyfileRow.hidden && el.lockKeyfile.files && el.lockKeyfile.files[0];
     if (file) keyFile = await file.arrayBuffer();
@@ -223,6 +241,7 @@ async function onUnlock(event) {
     }
     state.token = token;
     state.rev = opened.rev;
+    state.baseData = opened.data;
     state.vault = vault;
     el.lockPassword.value = '';
     el.lockKeyfile.value = '';
@@ -234,6 +253,7 @@ async function onUnlock(event) {
   } finally {
     setBusy(false);
   }
+  if (state.vault && state.pending) await reviewPending();
 }
 
 function enterApp(lastLogin) {
@@ -253,10 +273,12 @@ function enterApp(lastLogin) {
 
 /** Drops all decrypted state and returns to the lock screen. */
 function lock(message = '') {
+  if (el.dialog.open) el.dialog.close();
   if (state.vault) state.vault.close();
   state.vault = null;
   state.token = null;
   state.rev = null;
+  state.baseData = null;
   state.currentId = null;
   state.editingId = null;
   state.groupId = null;
@@ -281,17 +303,208 @@ function lock(message = '') {
   if (!message) el.lockPassword.focus();
 }
 
-function onLockClick() {
-  if (state.vault && state.vault.dirty && !window.confirm('You have unsaved changes. Lock anyway and discard them?')) return;
-  lock();
+/** Unsaved changes are only dropped by an explicit "Discard & lock". */
+async function onLockClick() {
+  if (!state.vault || state.busy) return;
+  const vault = state.vault;
+  try {
+    commitOpenEditor();
+  } catch (err) {
+    appStatus('error', errorMessage(err));
+    return;
+  }
+  if (!vault.dirty) {
+    lock();
+    return;
+  }
+  const choice = await choose('Lock the vault', 'You have unsaved changes.', vault.changes(), [
+    ['save', 'Save & lock', 'primary'],
+    ['discard', 'Discard & lock', 'danger'],
+    ['', 'Cancel'],
+  ]);
+  if (state.vault !== vault || !choice) return;
+  if (choice === 'save') await onSave();
+  if (state.vault === vault && (choice === 'discard' || !vault.dirty)) lock();
 }
 
 function checkIdle() {
-  if (!state.vault) return;
-  if (Date.now() - state.lastActivity >= AUTO_LOCK_MS) {
-    const dirty = state.vault.dirty;
-    lock(`Locked after 5 minutes of inactivity.${dirty ? ' Unsaved changes were discarded.' : ''}`);
+  // A save or download in progress finishes first; the next check locks.
+  if (!state.vault || state.busy) return;
+  if (Date.now() - state.lastActivity >= AUTO_LOCK_MINUTES * 60 * 1000) autoLock();
+}
+
+/** Locks after inactivity. Unsaved changes are saved once the vault is hidden (see autosave). */
+function autoLock() {
+  const vault = state.vault;
+  const message = `Locked after ${AUTO_LOCK_MINUTES} minutes of inactivity.`;
+  try {
+    commitOpenEditor();
+  } catch {
+    // the editor holds input the vault rejects: it is dropped
   }
+  if (!vault.dirty) {
+    lock(message);
+    return;
+  }
+  const session = { token: state.token, rev: state.rev, baseData: state.baseData };
+  state.vault = null; // keeps lock() from closing it before the save below is done
+  lock(`${message} Saving your changes…`);
+  state.autosave = autosave(vault, session, message).finally(() => {
+    vault.close();
+    state.autosave = null;
+  });
+}
+
+/**
+ * Uploads the changes of an auto-locked vault; a conflict is merged without asking, as nobody is there.
+ * Leaves state.pending for the next unlock: the version to revert to, or the changes to restore.
+ */
+async function autosave(vault, { token, rev, baseData }, message) {
+  const at = new Date();
+  let unsaved = null; // the last encrypted attempt and the server version it is based on
+  try {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const data = await vault.save();
+      unsaved = { data, baseData, baseRev: rev };
+      try {
+        const res = await api.save(token, rev, data);
+        state.pending = { type: 'saved', at, revertData: baseData, rev: res.rev };
+        lockStatus('info', `${message} Your changes were saved; unlock to review or revert them.`);
+        return;
+      } catch (err) {
+        if (err.code !== 'conflict') throw err;
+      }
+      const remote = await api.open(token);
+      await vault.merge(remote.data);
+      rev = remote.rev;
+      baseData = remote.data;
+    }
+    throw new Error('the vault kept changing on the server');
+  } catch (err) {
+    const reason = errorMessage(err);
+    if (!unsaved) {
+      lockStatus('error', `${message} Your changes could not be encrypted and are lost: ${reason}.`);
+      return;
+    }
+    state.pending = { type: 'unsaved', at, ...unsaved, reason };
+    lockStatus('error', `${message} Your changes could not be saved: ${reason}. Unlock in this tab to restore them.`);
+  }
+}
+
+/** After an unlock in the tab that auto-locked: offer to revert its automatic save or to restore what it could not save. */
+async function reviewPending() {
+  const pending = state.pending;
+  const vault = state.vault;
+  const time = pending.at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  if (pending.type === 'saved' && state.rev !== pending.rev) {
+    state.pending = null;
+    appStatus('info', `Your changes were saved automatically at ${time}. The vault has changed on the server since, so they can no longer be reverted here.`);
+    return;
+  }
+  let other;
+  let changes;
+  setBusy(true);
+  appStatus('info', 'Comparing with the last session…');
+  try {
+    if (pending.type === 'saved') {
+      other = await vault.openVersion(pending.revertData);
+      changes = vault.changesSince(other);
+    } else {
+      other = await vault.openVersion(pending.data);
+      const base = state.rev === pending.baseRev ? vault : await vault.openVersion(pending.baseData);
+      changes = other.changesSince(base);
+    }
+  } catch (err) {
+    state.pending = null;
+    if (pending.type === 'saved') {
+      appStatus('error', `Your changes were saved automatically at ${time}, but cannot be reverted: ${errorMessage(err)}`);
+    } else {
+      // e.g. the master password was changed elsewhere since: hand the changes out instead of dropping them
+      downloadBlob(pending.data, safeFileName(`${vault.name} unsaved`));
+      appStatus('error', `Your unsaved changes from ${time} cannot be opened with this password (${errorMessage(err)}). They were downloaded as an encrypted .kdbx file instead.`);
+    }
+    return;
+  } finally {
+    setBusy(false);
+  }
+  appStatus('', '');
+
+  if (pending.type === 'saved') {
+    const choice = await choose('Saved automatically', `Your unsaved changes were saved when the vault locked at ${time}.`, changes, [
+      ['keep', 'Keep', 'primary'],
+      ['revert', 'Revert', 'danger'],
+    ]);
+    if (state.vault !== vault) return; // locked again first: asked at the next unlock
+    state.pending = null;
+    if (choice === 'revert') await revertAutosave(other, pending.revertData);
+    return;
+  }
+
+  const choice = await choose('Unsaved changes', `Your changes could not be saved when the vault locked at ${time}: ${pending.reason}.`, changes, [
+    ['restore', 'Restore', 'primary'],
+    ['discard', 'Discard', 'danger'],
+  ]);
+  if (state.vault !== vault) return;
+  state.pending = null;
+  if (choice === 'discard') {
+    appStatus('info', 'The unsaved changes were discarded.', 6000);
+    return;
+  }
+  // Esc restores too: only an explicit Discard drops changes.
+  try {
+    vault.mergeVersion(other);
+  } catch (err) {
+    appStatus('error', `Restoring failed: ${errorMessage(err)}`);
+    return;
+  }
+  updateDirty();
+  showList();
+  appStatus('info', 'Changes restored. Tap Save to store them on the server.', 6000);
+}
+
+/** Puts the version from before the automatic save back on the server (the server backs up the replaced one). */
+async function revertAutosave(before, data) {
+  setBusy(true);
+  appStatus('info', 'Reverting…');
+  try {
+    const res = await api.save(state.token, state.rev, data);
+    state.vault.close();
+    state.vault = before;
+    state.rev = res.rev;
+    state.baseData = data;
+    showList();
+    appStatus('ok', 'Reverted to the version before the automatic save.', 6000);
+  } catch (err) {
+    appStatus('error', `Reverting failed: ${errorMessage(err)}`);
+  } finally {
+    setBusy(false);
+    updateDirty();
+  }
+}
+
+/** Modal dialog with an optional change list. Resolves to the pressed button's value, '' on Esc or lock. */
+function choose(title, text, changes, buttons) {
+  el.dialogTitle.textContent = title;
+  el.dialogText.textContent = text;
+  el.dialogChanges.replaceChildren(...changeItems(changes));
+  show(el.dialogChanges, changes.length > 0);
+  el.dialogActions.replaceChildren(
+    ...buttons.map(([value, label, cls]) => h('button', { type: 'button', class: cls, text: label, onclick: () => el.dialog.close(value) })),
+  );
+  el.dialog.returnValue = '';
+  el.dialog.showModal();
+  return new Promise((resolve) => {
+    el.dialog.addEventListener('close', () => resolve(el.dialog.returnValue), { once: true });
+  });
+}
+
+function changeItems(changes) {
+  const items = changes
+    .slice(0, MAX_LISTED_CHANGES)
+    .map((c) => h('li', { text: `${CHANGE_LABELS[c.change]}: ${c.kind === 'group' ? `group "${c.title}"` : c.title}` }));
+  const more = changes.length - MAX_LISTED_CHANGES;
+  if (more > 0) items.push(h('li', { class: 'muted', text: `and ${more} more` }));
+  return items;
 }
 
 function noteActivity() {
@@ -832,23 +1045,36 @@ function collectChanges() {
   return changes;
 }
 
+/** Applies the editor to the vault (as Done does) and shows the entry. Returns false for an edit without changes. */
+function commitEdit() {
+  const changes = collectChanges();
+  let id = state.editingId;
+  let changed = true;
+  if (id) changed = state.vault.updateEntry(id, changes);
+  else id = state.vault.createEntry(changes.groupId, changes);
+  el.editPassword.value = '';
+  el.editCustom.replaceChildren();
+  updateDirty();
+  showEntry(id);
+  return changed;
+}
+
+/** Locking applies an open editor instead of dropping what was typed (an untouched new entry is not created). */
+function commitOpenEditor() {
+  if (el.viewEdit.hidden) return;
+  const typed = [el.editTitle, el.editUsername, el.editPassword, el.editUrl, el.editNotes, el.editTags].some((i) => i.value);
+  if (state.editingId || typed) commitEdit();
+  else showList();
+}
+
 function onEditSubmit(event) {
   event.preventDefault();
   if (!state.vault || state.busy) return;
-  const changes = collectChanges();
+  const isNew = !state.editingId;
   try {
-    let id = state.editingId;
-    if (id) {
-      const changed = state.vault.updateEntry(id, changes);
-      appStatus('info', changed ? 'Changes applied. Tap Save to store them on the server.' : 'No changes.', 6000);
-    } else {
-      id = state.vault.createEntry(changes.groupId, changes);
-      appStatus('info', 'Entry added. Tap Save to store it on the server.', 6000);
-    }
-    el.editPassword.value = '';
-    el.editCustom.replaceChildren();
-    updateDirty();
-    showEntry(id);
+    const changed = commitEdit();
+    if (isNew) appStatus('info', 'Entry added. Tap Save to store it on the server.', 6000);
+    else appStatus('info', changed ? 'Changes applied. Tap Save to store them on the server.' : 'No changes.', 6000);
   } catch (err) {
     appStatus('error', errorMessage(err));
   }
@@ -1144,6 +1370,7 @@ async function saveWithConflictHandling() {
     try {
       const res = await api.save(state.token, state.rev, data);
       state.rev = res.rev;
+      state.baseData = data;
       vault.markSaved();
       updateDirty();
       appStatus('ok', 'Saved.', 4000);
@@ -1172,6 +1399,7 @@ async function saveWithConflictHandling() {
       throw err;
     }
     state.rev = remote.rev;
+    state.baseData = remote.data;
     if (state.currentId) showEntry(state.currentId);
     else if (!el.viewList.hidden) renderList();
     renderTree(); // the sidebar shows in every view, and groups may have changed remotely
@@ -1268,17 +1496,17 @@ function bindEvents() {
   el.importSubmit.addEventListener('click', onImportSubmit);
 
   document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape' && state.vault && !el.viewEntry.hidden) showList();
+    if (event.key === 'Escape' && state.vault && !el.viewEntry.hidden && !el.dialog.open) showList();
   });
 
-  for (const type of ['pointerdown', 'keydown', 'input', 'touchstart', 'wheel', 'scroll']) {
+  for (const type of ['pointerdown', 'mousemove', 'keydown', 'input', 'touchstart', 'wheel', 'scroll']) {
     document.addEventListener(type, noteActivity, { capture: true, passive: true });
   }
   setInterval(checkIdle, 10000);
   document.addEventListener('visibilitychange', checkIdle);
 
   window.addEventListener('beforeunload', (event) => {
-    if (state.vault && state.vault.dirty) {
+    if ((state.vault && state.vault.dirty) || state.autosave || state.pending?.type === 'unsaved') {
       event.preventDefault();
       event.returnValue = '';
     }

@@ -197,7 +197,19 @@ else:
   6/30/SHA-1); HOTP with SHA-1 and 6 digits gets `HmacOtp-Secret-Base32` and `HmacOtp-Counter`.
 - Entries with an `otp` link or KeePass 2 OTP fields offer "Show QR code": the `otpauth://` link as a QR
   code drawn on a canvas with the bundled `qr` library, to scan the code back into an authenticator app.
-- Copy buttons put the value on the clipboard and leave it there (no auto-clear). The
-  app auto-locks after 5 min of inactivity and drops all decrypted state.
+- Copy buttons put the value on the clipboard and leave it there (no auto-clear).
+- Unsaved changes are only dropped by an explicit choice. Lock (and auto-lock) first applies
+  an open entry editor as Done would. Lock with unsaved changes asks: Save & lock, Discard &
+  lock, or Cancel, listing the changed entries and groups (added, edited, moved, moved to the
+  recycle bin, deleted permanently; compared by UUID, modification time and parent group with
+  the last server version).
+- The app auto-locks after 10 min without clicks, key presses, touches, scrolling or mouse
+  movement, and drops all decrypted state. With unsaved changes it hides the vault, saves
+  them (merging a conflict without asking), then drops the vault. Until the next unlock in
+  the same tab it keeps only encrypted bytes: after a successful save the version before it,
+  otherwise the unsaved version and the server version it was based on. The next unlock
+  lists the changes and offers Keep or Revert (uploads the earlier version again, refused if
+  the server rev differs from the auto-saved one), or Restore or Discard (merges the unsaved
+  version into the opened one). The token is never kept past the lock.
 - CSP-compatible: no inline scripts or styles and no eval. WebAssembly needs
   `'wasm-unsafe-eval'`. QR codes are drawn on a canvas, so `img-src` needs neither `data:` nor `blob:`.

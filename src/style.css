@@ -736,6 +736,42 @@ textarea.mono {
   image-rendering: pixelated;
 }
 
+/* Lock / auto-save dialog */
+.dialog {
+  width: calc(100% - 2rem);
+  max-width: 32rem;
+  max-height: calc(100% - 2rem);
+  padding: 1rem;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.dialog::backdrop {
+  background: rgb(0 0 0 / 0.5);
+}
+
+.dialog h2 {
+  margin-top: 0;
+}
+
+.changes {
+  max-height: 40vh;
+  overflow-y: auto;
+  margin: 0.5rem 0;
+  padding-left: 1.25rem;
+}
+
+.changes li {
+  margin-bottom: 0.25rem;
+  overflow-wrap: anywhere;
+}
+
+.dialog .actions {
+  margin-bottom: 0;
+}
+
 .offscreen {
   position: fixed;
   top: -1000px;
